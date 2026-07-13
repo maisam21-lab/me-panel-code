@@ -1,0 +1,3 @@
+# nothing sensitive expected; add local-only files here
+*.log
+.DS_Store
