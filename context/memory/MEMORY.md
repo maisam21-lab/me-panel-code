@@ -17,6 +17,7 @@
 - [Frame findings as ours](feedback-frame-findings-as-ours.md) — don't credit Jad/stakeholders for catches ("Jad found/caught/right"); Maysam + our audits already surfaced them
 - [ME vacant w/ approved def](me-vacant-approved-def.md) — time-bounded approved-opp window (date_approved__c on raw SF mirror, lowercase); must mirror Approved Deals report filters (exclude Virtual/CloudRetail + Member Transfer) or over-counts ~2x
 - [ME bridge column mapping](me-bridge-column-mapping.md) — panel reads Extract by fixed column POSITION (SRC map); add metrics by APPENDING at the end (zero shift), never insert mid-list; verify ordinal=SRC after
+- [Talabat area-intel repo deleted](talabat-area-intel-repo-gone.md) — GitHub repo gone (Jul 2026); Windows ~/talabat_area_intel folder is the only remaining copy; don't suggest cloning it
 - [Talabat server deploy](talabat-server-deploy.md) — production server is 178.105.56.187 (NOT 5.9.73.113); deploy via POST /api/admin/deploy; API key in nginx.conf
 - [Streamlit hands-off](feedback_streamlit.md) — never modify Streamlit code or direct user to the UI to verify fixes; verify via API endpoints only
 - [Panel parity](feedback-panel-parity.md) — every metric goes on Full + ALL country panels (not Summary); country panels' only extra = per-AE productivity scorecards; non-facility-grain metrics added country-only via Extract_K

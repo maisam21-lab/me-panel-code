@@ -55,6 +55,14 @@ var FACILITY_FORCE_PER_FACILITY = { liveSoldRate: 1, liveSoldRateApproved: 1, so
 
 /* Productivity fields that expand inline per AE name (country total + ↳ AE sub-rows). */
 var FACILITY_AE_PROD_FIELDS = {
+  // RRLX $ (gross post-access churn LF) attributed to the closer (closed_won_owner). Twin of the
+  // per-facility XRRL block; per-AE sub-rows sum to the country GROSS RRLX line (headline shows the
+  // recognized col-33 value, same basis mismatch the per-facility XRRL block already has).
+  xrrlByAe:                 { src: 'xrrl', fmt: '$#,##0' },
+  // RRLX % by CLOSER COHORT (Jad Jul 14 2026): per-AE churned LF / the AE's OWN occupied book at
+  // prior EoP (fractions 0-1, so '0.00%' renders right). Portfolio churn RATES, not shares -- rows
+  // do NOT sum to the country headline (that stays country churned / country book).
+  xrrlPctByAe:              { src: 'xrrlpct', fmt: '0.00%' },
   salesTeamCwProductivity:  { src: 'cw',   fmt: '0' },
   salesTeamTcvProductivity: { src: 'tcv',  fmt: '$#,##0' },
   salesTeamApprovedProd:    { src: 'appr', fmt: '0' },
@@ -89,7 +97,8 @@ var FACILITY_PANEL_ORDER = [
   'preAccessChurns', 'nonLiveChurns', 'pctPreAccessOfChurns', 'pctNonLiveOfChurns',
   'netAdds', 'nrra', 'nrraUsd',
   'newOccupiedKitchens',             // count of accesses in month (excl Member Transfer); country-only (no facility split in Extract_F)
-  'xrraUsd', 'xrrlUsd', 'nrrxUsd',   // Family X (gross, access/churn-date): RRX $ / RRLX $ / NRRX $ (per-facility in Extract_F)
+  'xrraUsd', 'xrrlUsd', 'xrrlByAe',              // Family X (gross, access/churn-date): RRX $ / RRLX $ (per-facility) / RRLX $ by salesperson (AE, standalone-only)
+  'xrrlPct', 'xrrlPctByAe', 'nrrxUsd',           // RRLX % (per-facility, Extract_F col 136) / RRLX % by salesperson (AE, standalone-only) / NRRX $
   'grossRrUsd', 'rrAfterMkoMfoUsd',  // occupied-kitchen LF stock at EoP (Jad Jul 2026); country-only (no facility split in Extract_F)
   'salesTeamSize', 'salesTeamApprovedProd', 'salesTeamCwProductivity', 'salesTeamTcvProductivity',
   'aes', 'aeApprovedProd', 'aeCwProd', 'aeTcvProd', 'sdrs',
@@ -151,17 +160,24 @@ var STANDALONE_ID_PREFIX   = 'ME_STANDALONE_ID_';
 var STANDALONE_FILE_PREFIX = 'ME Facility Panel — ';   // "ME Facility Panel — <country>"
 
 function buildAllStandaloneCountryFiles() {
-  var ctx = facilityBuildContext_(getWorkbook_());   // read Extract_F + Extract_K + AE ctx once
+  // STAGGERED (Maysam Jul 14 2026 OOM fix): building all 5 countries in ONE execution held the full
+  // Extract_F matrix + every country's map in a single heap and kept hitting "Out of memory".
+  // Now: small countries inline (each with its OWN ctx, released mid-render), the heavy three
+  // (UAE/Saudi/Kuwait) as one-off triggers ~1-3 min out — one execution each, same as meHardRefreshNow.
   var out = [];
-  for (var i = 0; i < COUNTRIES.length; i++) {
-    try { out.push(COUNTRIES[i] + ': ' + buildStandaloneCountryFile_(COUNTRIES[i], ctx)); }
-    catch (e) { out.push(COUNTRIES[i] + ': FAILED — ' + e); Logger.log('standalone ' + COUNTRIES[i] + ': ' + e); }
+  var small = ['Bahrain', 'Qatar'];
+  for (var i = 0; i < small.length; i++) {
+    try { out.push(small[i] + ': ' + buildStandaloneCountryFile_(small[i])); }
+    catch (e) { out.push(small[i] + ': FAILED — ' + e); Logger.log('standalone ' + small[i] + ': ' + e); }
   }
-  tryUiAlert_('Standalone country files:\n\n' + out.join('\n'));
+  meScheduleOneOffStandalones_();
+  tryUiAlert_('Standalone country files:\n\n' + out.join('\n') +
+    '\n\nUAE / Saudi Arabia / Kuwait build in their own runs over the next ~3 minutes.');
 }
 
 /* Build/refresh ONE country's standalone file; returns its URL. ctx optional (built if omitted). */
 function buildStandaloneCountryFile_(country, ctx) {
+  var ownCtx = !ctx;   // fresh ctx = no other country needs facData after this build -> safe to release mid-render
   if (!ctx) ctx = facilityBuildContext_(getWorkbook_());
   var props = PropertiesService.getDocumentProperties();
   var key = STANDALONE_ID_PREFIX + country.replace(/[^A-Za-z0-9]+/g, '_');
@@ -175,7 +191,7 @@ function buildStandaloneCountryFile_(country, ctx) {
     if (folderId) { try { DriveApp.getFileById(ss.getId()).moveTo(DriveApp.getFolderById(folderId)); } catch (e) {} }
   }
   renderFacilityPanel_(ss, country, ctx,                        // same renderer, pointed at the standalone wb
-    { spacerRows: true });                                       // standalone: blank row between metrics; country detail folded (collapseCountry) by default
+    { spacerRows: true, releaseFacData: ownCtx });               // standalone: blank row between metrics; own-ctx builds free the raw extract matrix once mapped (OOM relief)
   var def = ss.getSheetByName('Sheet1');                        // drop the empty default tab create() leaves
   if (def && ss.getSheets().length > 1) { try { ss.deleteSheet(def); } catch (e) {} }
   SpreadsheetApp.flush();
@@ -268,10 +284,15 @@ function facilityNameColumn_(headerRow) {
  * sp_rebuild_me_facility: 1 when the facility is a currently-live account facility). */
 var FACILITY_IS_LIVE_ACCOUNT_COL = 134;
 
-/* Extract_F col 135 = account facility_type__c (CK / QC / BP / Mixed Use). QC facilities are live but
- * pre-build (0 kitchens); we keep them in the panel but tag the name "<name> - QC" and colour that
- * label (Maysam Jul 2026). */
+/* Extract_F col 135 = account facility_type__c (CK / QC / BP / Mixed Use). QC (Quick Commerce)
+ * facilities hold no delivery kitchens and are EXCLUDED from these panels (Maysam Jul 14 2026 —
+ * supersedes the keep-and-tag call); they'll get their own "other leasable" panel sheet. The
+ * QC_TAG/QC_LABEL_COLOR consts + tagQcFacilities_/colorQcLabels_ stay for that future panel. */
 var FACILITY_TYPE_COL = 135;
+/* Extract_F col 136 = xrrl_pct (RRLX %: facility gross post-access churned LF / prior-month COUNTRY
+ * Gross RR book). Positions diverge from Extract_K here (K has xrrl_pct at 157), so the shared
+ * extractCountryMetricsFromRow_ read (SRC.xrrlPct=157 -> undefined on F rows) MUST be overridden. */
+var FACILITY_XRRL_PCT_COL = 136;
 var QC_TAG = ' - QC';
 var QC_LABEL_COLOR = '#8e24aa';   // purple — stands out from the green/red metric colours
 
@@ -282,13 +303,16 @@ function buildMonthFacilityMap_(matrix, country, nameCol) {
     var row = matrix[r];
     var mk = normalizeMonthKey_(row[SRC.MONTH - 1]);
     if (!mk || !/^\d{4}-\d{2}-\d{2}$/.test(mk)) continue;
+    if (mk < PANEL_START_MONTH) continue;                       // pre-window months never render — don't build recs for them (OOM relief)
     if (normalizeCountry_(row[SRC.COUNTRY - 1]) !== country) continue;
     var fname = String(row[nameCol - 1] == null ? '' : row[nameCol - 1]).trim();
     if (!fname) continue;
+    if (String(row[FACILITY_TYPE_COL - 1] || '').toUpperCase() === 'QC') continue;   // QC facilities excluded from panels (Maysam Jul 14 2026) — skip at the source
     if (!byMonth[mk]) byMonth[mk] = {};
     var frec = extractCountryMetricsFromRow_(row);
     frec.isLiveAccount = (toNumNullable_(row[FACILITY_IS_LIVE_ACCOUNT_COL - 1]) || 0) > 0;  // Extract_F col 134 = is_live_account
     frec.facilityType  = row[FACILITY_TYPE_COL - 1];                                        // Extract_F col 135 = account facility_type__c
+    frec.xrrlPct       = toNumNullable_(row[FACILITY_XRRL_PCT_COL - 1]);                    // Extract_F col 136 = xrrl_pct (K puts it at 157 -> shared reader gives NaN on F rows; override)
     byMonth[mk][fname] = frec;
   }
   return byMonth;
@@ -296,26 +320,32 @@ function buildMonthFacilityMap_(matrix, country, nameCol) {
 
 /* Facilities to render: any that held a kitchen / CW / occupied kitchen in the window, PLUS any
  * currently-live account facility (go-live-dated, not inactive) even at 0 kitchens — so live
- * status-less facilities like SA - RUH - Mursalat show up (Jad Jul 2026). Sorted by name. */
+ * status-less delivery facilities show up (Jad Jul 2026). QC (Quick Commerce) facilities are
+ * EXCLUDED entirely (Maysam Jul 14 2026 — supersedes the earlier keep-and-tag call): they hold no
+ * delivery kitchens, and a separate "other leasable" panel sheet will cover them. Sorted by name. */
 function facilityListForCountry_(byMonth, months, countryLabel) {
-  var active = {};
+  var active = {}, qc = {};
   for (var mi = 0; mi < months.length; mi++) {
     var pack = byMonth[months[mi]] || {};
     for (var key in pack) {
       if (key === countryLabel) continue;
       var rec = pack[key];
       if (!rec) continue;
+      if (String(rec.facilityType || '').toUpperCase() === 'QC') { qc[key] = 1; continue; }
       if ((Number(rec.totalKitchens) || 0) > 0 || (Number(rec.cws) || 0) > 0 || (Number(rec.occupiedKitchens) || 0) > 0 || rec.isLiveAccount) {
         active[key] = 1;
       }
     }
   }
+  for (var qk in qc) delete active[qk];   // type can be blank on stray months — drop the facility if ANY month says QC
   return Object.keys(active).sort();
 }
 
-/* Tag QC / non-delivery facilities: rename to "<name> - QC" in BOTH the facilities list and the byFac
- * keys (so every metric block shows the tag). Returns {facilities, hasQc}. QC = live pre-build, 0
- * kitchens (Maysam Jul 2026: keep them, but flag by name + colour). */
+/* RETIRED (Maysam Jul 14 2026): QC facilities are now EXCLUDED from the panels entirely
+ * (filtered in facilityListForCountry_) — a separate "other leasable" panel sheet will cover them.
+ * Kept (with colorQcLabels_ and the QC_* consts) for reuse when that panel is built.
+ * Original behavior: rename QC facilities to "<name> - QC" in BOTH the facilities list and the
+ * byFac keys (so every metric block shows the tag). Returns {facilities, hasQc}. */
 function tagQcFacilities_(byFac, months, facilities) {
   var isQc = {};
   for (var fi = 0; fi < facilities.length; fi++) {
@@ -424,8 +454,12 @@ function trimAndClearSheet_(sheet, needR, needC) {
 }
 
 function renderFacilityPanel_(wb, country, ctx, renderOpts) {
-  renderOpts = renderOpts || {};   // {spacerRows, collapseAll} — set only for the standalone country files
+  renderOpts = renderOpts || {};   // {spacerRows, collapseAll, releaseFacData} — set only for the standalone country files
   var byFac = buildMonthFacilityMap_(ctx.facData, country, ctx.facNameCol);
+  // Single-country builds own their ctx: the raw Extract_F matrix (~6k rows x 136 cols) is dead
+  // weight once this country's byFac is built — drop it BEFORE the render/styling allocations
+  // (Maysam Jul 14 2026 OOM relief). Never set for shared-ctx loops (buildAllFacilityPanels etc.).
+  if (renderOpts.releaseFacData) ctx.facData = null;
 
   var months = Object.keys(byFac).sort();
   months = filterMonthsFrom_(months, PANEL_START_MONTH);
@@ -481,8 +515,8 @@ function renderFacilityPanel_(wb, country, ctx, renderOpts) {
   }
 
   var facilities = facilityListForCountry_(byFac, months, country);
-  var _qc = tagQcFacilities_(byFac, months, facilities);   // tag QC facilities "<name> - QC" (Maysam Jul 2026)
-  facilities = _qc.facilities;
+  // QC facilities are filtered out inside facilityListForCountry_ (Maysam Jul 14 2026) — the old
+  // tagQcFacilities_ "- QC" rename is retired until the separate other-leasable panel is built.
   var blocks = facilityPanelBlocks_();
 
   var uiOpts = getPanelUiOptions_();
@@ -574,13 +608,15 @@ function renderFacilityPanel_(wb, country, ctx, renderOpts) {
     layouts.push(lay);
     rowPtr = lay.nextRowBelowBlock;
     if (renderOpts.spacerRows && bi < blocks.length - 1) { spacerRows.push(rowPtr); rowPtr++; }   // blank separator row between metrics
+    if (bi % 8 === 7) SpreadsheetApp.flush();   // drain the pending-mutation buffer periodically — thousands of buffered Range ops are an Apps Script OOM source (Maysam Jul 14 2026)
   }
+  SpreadsheetApp.flush();
 
   var lastBodyRow = layouts.length ? layouts[layouts.length - 1].countryLast : 1;
   applyPanelStyling_(sheet, blocks, layouts, monthsLen, sparkCol, uiOpts, theme, lastBodyRow, months);
+  SpreadsheetApp.flush();   // styling makes thousands of small per-row format calls — drain before grouping
   applyRowGroups_(sheet, layouts, blocks, { collapseCountry: true, collapseAll: !!renderOpts.collapseAll });
   if (uiOpts.heatmap) applyHeatmapRules_(sheet, blocks, layouts, monthsLen, theme);
-  if (_qc.hasQc) colorQcLabels_(sheet, 5, lastBodyRow);   // purple + bold on the "- QC" facility labels
   addRefreshStamp_(sheet, displayLastCol, theme);
 
   if (sparkCol) sheet.setColumnWidth(sparkCol, 72);
@@ -750,7 +786,9 @@ function facilityCellValue_(cv, block) {
     return (cv === null || cv === '' || !isFinite(Number(cv))) ? '' : Number(cv);
   }
   if (block.field === 'rrl') return cv === null ? 0 : cv;
-  return (cv === null || cv === '') ? 0 : Number(cv);
+  if (cv === null || cv === '') return 0;
+  var n = Number(cv);
+  return isFinite(n) ? n : '';   // K-only fields (SRC > 135) read past an Extract_F row's end -> NaN; blank the cell instead
 }
 
 /* ── Productivity block with inline per-AE name sub-rows (country total + ↳ AE names) ── */
@@ -760,6 +798,8 @@ function writeFacilityProdAeBlock_(sheet, block, byFac, months, country, startRo
   var aeData = defn.src === 'cw' ? aeCtx.cwByAe
              : defn.src === 'tcv' ? aeCtx.tcvByAe
              : defn.src === 'appr' ? aeCtx.apprByAe
+             : defn.src === 'xrrl' ? aeCtx.xrrlByAe
+             : defn.src === 'xrrlpct' ? aeCtx.xrrlPctByAe
              : null;   // 'count' (AE list): no per-AE data map
 
   // Full AE set for this country = current confirmed roster UNION anyone with productivity history
@@ -774,7 +814,7 @@ function writeFacilityProdAeBlock_(sheet, block, byFac, months, country, startRo
     seenP[rk] = true;
     people.push({ name: pr.name, country: country, role: 'Delivery', start: pr.start, hist: false });
   }
-  var maps3 = [aeCtx.cwByAe, aeCtx.tcvByAe, aeCtx.apprByAe];
+  var maps3 = [aeCtx.cwByAe, aeCtx.tcvByAe, aeCtx.apprByAe, aeCtx.xrrlByAe];
   for (var mpi = 0; mpi < maps3.length; mpi++) {
     for (var ckk in maps3[mpi]) {
       if (ckk.indexOf(country + '|') !== 0) continue;
@@ -787,7 +827,8 @@ function writeFacilityProdAeBlock_(sheet, block, byFac, months, country, startRo
         var mth = months[wmi];
         if ((aeCtx.cwByAe[ckk] && aeCtx.cwByAe[ckk][mth]) ||
             (aeCtx.tcvByAe[ckk] && aeCtx.tcvByAe[ckk][mth]) ||
-            (aeCtx.apprByAe[ckk] && aeCtx.apprByAe[ckk][mth])) inWin = true;
+            (aeCtx.apprByAe[ckk] && aeCtx.apprByAe[ckk][mth]) ||
+            (aeCtx.xrrlByAe[ckk] && aeCtx.xrrlByAe[ckk][mth])) inWin = true;
       }
       if (!inWin) continue;
       people.push({ name: (aeCtx.nameByKey && aeCtx.nameByKey[ckk]) || nmk,
@@ -1634,19 +1675,21 @@ function pullApprovedTcvByFac_() {
 /* ── Pull per-AE data once for all countries (keyed country|ae -> month -> value) ── */
 function pullAeDataForCtx_() {
   var key_ = function (s) { return String(s || '').toLowerCase().replace(/^\s+|\s+$/g, ''); };
-  var aeCtx = { cwByAe: {}, tcvByAe: {}, apprByAe: {}, roster: [], kpi: {}, nameByKey: {} };
+  var aeCtx = { cwByAe: {}, tcvByAe: {}, apprByAe: {}, xrrlByAe: {}, xrrlPctByAe: {}, roster: [], kpi: {}, nameByKey: {} };
   try {
     var cwR = runBqQueryAll_("SELECT ae, FORMAT_DATE('%Y-%m-%d',month_end) AS m, country, " +
-      "SUM(cw_kitchens) AS cw, SUM(tcv_usd) AS tcv, SUM(approved_deals) AS appr " +
+      "SUM(cw_kitchens) AS cw, SUM(tcv_usd) AS tcv, SUM(approved_deals) AS appr, SUM(xrrl_usd) AS xrrl, SUM(xrrl_pct) AS xrrlpct " +
       "FROM `css-operations.me_panel_dev_us.me_ae_productivity_by_owner` GROUP BY 1,2,3");
     for (var c1 = 0; c1 < cwR.rows.length; c1++) {
       var ak = key_(cwR.rows[c1][0]), mk = String(cwR.rows[c1][1]), ct = String(cwR.rows[c1][2]);
       var ck = ct + '|' + ak;
       if (!aeCtx.nameByKey[ck]) aeCtx.nameByKey[ck] = String(cwR.rows[c1][0]);   // display name (incl. departed AEs)
-      if (!aeCtx.cwByAe[ck]) { aeCtx.cwByAe[ck] = {}; aeCtx.tcvByAe[ck] = {}; aeCtx.apprByAe[ck] = {}; }
+      if (!aeCtx.cwByAe[ck]) { aeCtx.cwByAe[ck] = {}; aeCtx.tcvByAe[ck] = {}; aeCtx.apprByAe[ck] = {}; aeCtx.xrrlByAe[ck] = {}; aeCtx.xrrlPctByAe[ck] = {}; }
       aeCtx.cwByAe[ck][mk]   = (aeCtx.cwByAe[ck][mk]   || 0) + (Number(cwR.rows[c1][3]) || 0);
       aeCtx.tcvByAe[ck][mk]  = (aeCtx.tcvByAe[ck][mk]  || 0) + (Number(cwR.rows[c1][4]) || 0);
       aeCtx.apprByAe[ck][mk] = (aeCtx.apprByAe[ck][mk] || 0) + (Number(cwR.rows[c1][5]) || 0);
+      aeCtx.xrrlByAe[ck][mk] = (aeCtx.xrrlByAe[ck][mk] || 0) + (Number(cwR.rows[c1][6]) || 0);   // RRLX $ (gross post-access) by closer
+      aeCtx.xrrlPctByAe[ck][mk] = (aeCtx.xrrlPctByAe[ck][mk] || 0) + (Number(cwR.rows[c1][7]) || 0);   // RRLX % contribution (fraction) by closer
     }
   } catch (e) { Logger.log('pullAeDataForCtx_ ae: ' + e); }
   try {

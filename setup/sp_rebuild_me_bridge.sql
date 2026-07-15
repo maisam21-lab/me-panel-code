@@ -1299,7 +1299,10 @@ SELECT
   COALESCE(nl_kitchens_total,0) AS nl_kitchens_total,                               -- 153 (Non-Live rate's own denominator: kitchens at scheduled-future-go-live facilities)
   COALESCE(discounted_rr_usd,0) AS discounted_rr_usd,                               -- 154 (Discounted RR $: sum of License Fee after Policy Discount SF field, same occupied-opp universe + FX as Gross RR - Jad Jul 9 2026)
   rr_discount_pct,                                                                  -- 155 (RR Discount %: 1 - Discounted RR / Gross RR = policy-discount share of gross; NULL when gross=0 - Jad Jul 9 2026)
-  COALESCE(approved_deals_live,0) AS approved_deals_live                            -- 156 (Approved Deals at LIVE facilities only: flow by approval month, facility live/partial-go-live & not inactive - Maysam Jul 2026)
+  COALESCE(approved_deals_live,0) AS approved_deals_live,                           -- 156 (Approved Deals at LIVE facilities only: flow by approval month, facility live/partial-go-live & not inactive - Maysam Jul 2026)
+  SAFE_DIVIDE(COALESCE(xrrl_usd,0),
+              NULLIF(LAG(gross_rr_usd) OVER (PARTITION BY country ORDER BY month_end), 0))
+                                                                                    AS xrrl_pct   -- 157 (RRLX %: GROSS post-access churned LF (joined.xrrl_usd = xrrl_monthly, NOT the recognized col-33 remap) / prior-month Gross RR $ book (col 151) - the X-family mirror of RRL % "Churned LF / LM Gross LF Revenue" - Maysam Jul 2026)
 FROM joined
 ORDER BY month_end, country;
 END;

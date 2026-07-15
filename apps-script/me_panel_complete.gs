@@ -290,6 +290,9 @@ function getFieldTone_(field) {
     occupiedKitchens:  'occupancy',
     netAdds:           'neutral',
     nrraUsd:           'neutral',
+    xrrlByAe:          'down',   // RRLX-by-salesperson: loss metric, same red tone as xrrlUsd
+    xrrlPct:           'down',   // RRLX %: loss-rate metric, same red tone
+    xrrlPctByAe:       'down',
     cwDuration:        'up',  // green, same tone as Closed Wons (CWs)
     // Productivity block (Sales Team Size, SDRs, AEs + AE productivity) → 'rate' so the
     //  side-rail matches the amber band FULL_PANEL_BAND_COLORS assigns the whole block
@@ -495,6 +498,7 @@ var SRC = {
   discountedRrUsd:          154,   // Discounted RR $: LF after Policy Discount, same occupied stock (Jad Jul 2026)
   rrDiscountPct:            155,   // RR Discount %: 1 - Discounted/Gross = policy-discount share of gross (Jad Jul 2026)
   approvedDealsLive:        156,   // Approved Deals at LIVE (or partial-go-live) facilities only (Maysam Jul 2026)
+  xrrlPct:                  157,   // RRLX %: gross post-access churned LF / prior-month Gross RR $ book (col 151) (Maysam Jul 2026)
   stCws:                    3,
   aeCount:                  121
   // salesTeamSize is mapped ONCE above (col 119 = real sales_team_size).
@@ -1305,6 +1309,47 @@ function getWebBootBlockDefs_() {
       story:      'Recognized churned LF, post-access. Equals RRL $ (pre-access churns recognize $0), so it never exceeds RRL.',
       section:    'revenue',
       format:     'currency'
+    },
+    {
+      // Standalone country panels ONLY (not in GLOBAL_FULL_PANEL_ORDER). Renders the RRLX $ broken
+      // down by salesperson (closer / closed_won_owner) as a twin of the per-facility RRLX block —
+      // per-AE sub-rows are GROSS post-access churn LF and sum to the country gross RRLX line
+      // (headline reuses xrrlUsd = recognized col-33, same basis as the per-facility XRRL block).
+      panelTitle: 'RRLX $ by Salesperson - Recurring Revenue Lost (post-access) by closer',
+      title:      'RRLX $ by Salesperson - Recurring Revenue Lost (post-access) by closer',
+      field:      'xrrlByAe',
+      meKind:     'sum',
+      story:      'RRLX $ attributed to the AE who originally closed the churned deal. Expand to see each salesperson\'s post-access churned LF.',
+      section:    'revenue',
+      format:     'currency'
+    },
+    {
+      // Standalone country panels ONLY. RRLX % = gross post-access churned LF / prior-month Gross
+      // RR $ book (bridge col 157; facility rows read Extract_F col 136 against the same COUNTRY
+      // base, so facility rows sum toward the headline). X-family mirror of RRL % ("Churned LF /
+      // LM Gross LF Revenue") using our own fresh gross base instead of the mart's LM book.
+      panelTitle: 'RRLX % - Recurring Revenue Lost % (post-access Churned LF / LM Gross RR $)',
+      title:      'RRLX % - Recurring Revenue Lost % (post-access Churned LF / LM Gross RR $)',
+      field:      'xrrlPct',
+      meKind:     'sum',
+      story:      'Post-access churned LF as a share of the prior-month gross recurring-revenue book. Facility rows use the same country base, so they sum to the country line.',
+      section:    'revenue',
+      format:     'percent'
+    },
+    {
+      // Standalone country panels ONLY. RRLX % by CLOSER COHORT (Jad Jul 14 2026: "I want the
+      // denominator to be only the CW by that AE"): each AE row = his churned LF / his OWN occupied
+      // book at the start of the churn month (deals he closed, still occupied at prior EoP). These
+      // are per-AE portfolio churn rates -- they do NOT sum to the country headline (which keeps its
+      // own rate, country churned LF / country book). Can exceed 100% if a deal accesses and churns
+      // within the same month (book at prior EoP misses it).
+      panelTitle: 'RRLX % by Salesperson - each closer\'s churned LF / his own occupied book',
+      title:      'RRLX % by Salesperson - each closer\'s churned LF / his own occupied book',
+      field:      'xrrlPctByAe',
+      meKind:     'sum',
+      story:      'Each salesperson\'s portfolio churn rate: LF churned from deals he closed, over his own still-occupied book at the start of the month. Rows are rates, not shares - they don\'t sum to the country line.',
+      section:    'revenue',
+      format:     'percent'
     },
     {
       panelTitle: 'NRRX $ - Net Recurring Revenue Accessed (RRX - RRL post-access)',
@@ -3927,6 +3972,9 @@ function formatNumberColumns_(sheet, r1, r2, c1, numCols, field) {
     netSoldApprovedRate:      '0.00%',
     xrraUsd:                  '$#,##0',
     xrrlUsd:                  '$#,##0',
+    xrrlByAe:                 '$#,##0',
+    xrrlPct:                  '0.00%',
+    xrrlPctByAe:              '0.00%',
     nrrxUsd:                  '$#,##0',
 
     // ---- new columns: percent fields ----
@@ -4343,6 +4391,7 @@ function extractMeAggregateMetricsFromRow_(row) {
     netSoldApprovedRate:       toNumNullable_(row[SRC.NET_SOLD_APPROVED_RATE - 1]),
     xrraUsd:                   toNumNullable_(row[SRC.XRRA_USD - 1]),
     xrrlUsd:                   toNumNullable_(row[SRC.XRRL_USD - 1]),
+    xrrlPct:                   toNumNullable_(row[SRC.xrrlPct - 1]),   // RRLX % (fraction 0-1; K col 157 — F rows override from col 136 in buildMonthFacilityMap_)
     nrrxUsd:                   toNumNullable_(row[SRC.NRRX_USD - 1]),
     // new columns 35-124 — camelCase SRC keys, 0-based row index (SRC value - 1)
     rra:                       toNumNullable_(row[SRC.rra - 1]),
@@ -4516,6 +4565,7 @@ function extractCountryMetricsFromRow_(row) {
     netSoldApprovedRate:       toNumNullable_(row[SRC.NET_SOLD_APPROVED_RATE - 1]),
     xrraUsd:                   toNumNullable_(row[SRC.XRRA_USD - 1]),
     xrrlUsd:                   toNumNullable_(row[SRC.XRRL_USD - 1]),
+    xrrlPct:                   toNumNullable_(row[SRC.xrrlPct - 1]),   // RRLX % (fraction 0-1; K col 157 — F rows override from col 136 in buildMonthFacilityMap_)
     nrrxUsd:                   toNumNullable_(row[SRC.NRRX_USD - 1]),
     // new columns 35-124 — camelCase SRC keys, 0-based row index (SRC value - 1)
     rra:                       toNumNullable_(row[SRC.rra - 1]),
@@ -4670,6 +4720,14 @@ function countryMetricValueForBlock_(rec, b) {
   if (b.field === 'aeApprovedProd') {
     var aeAppr = Number(rec.approvedDeals), aeN = Number(rec.aes);
     return (isFinite(aeAppr) && isFinite(aeN) && aeN > 0) ? aeAppr / aeN : null;
+  }
+  if (b.field === 'xrrlByAe') {   // RRLX-by-salesperson headline = country RRLX (col 33), same as the per-facility XRRL block
+    var xv = rec.xrrlUsd;
+    return xv === null || xv === '' ? 0 : Number(xv);
+  }
+  if (b.field === 'xrrlPctByAe') {   // RRLX-%-by-salesperson headline = country RRLX % (col 157); AE sub-rows are each closer's OWN-book rate (don't sum to it)
+    var xp = rec.xrrlPct;
+    return xp === null || xp === '' ? 0 : Number(xp);
   }
   var raw = rec[b.field];
   return raw === null || raw === '' ? 0 : Number(raw);
@@ -5016,6 +5074,7 @@ function newEmptyWideMetricRecord_() {
     netSoldApprovedRate:       null,
     xrraUsd:                   null,
     xrrlUsd:                   null,
+    xrrlPct:                   null,
     nrrxUsd:                   null,
     // new columns
     rra:                       null,
@@ -5465,7 +5524,7 @@ var FULL_PANEL_BAND_COLORS = {
   // Cloud-Retail teal #D0E0E3
   crCws:'#D0E0E3',
   // Bright red #FF0000 — primary churn / lost
-  churnsExclTransfers:'#FF0000', rrlAgeMonths:'#FF0000', rrl:'#FF0000', rrlUsd:'#FF0000', xrrlUsd:'#FF0000',
+  churnsExclTransfers:'#FF0000', rrlAgeMonths:'#FF0000', rrl:'#FF0000', rrlUsd:'#FF0000', xrrlUsd:'#FF0000', xrrlByAe:'#FF0000', xrrlPct:'#FF0000', xrrlPctByAe:'#FF0000',
   churnRateExclTransfers:'#FF0000', pctPrematureChurns:'#FF0000',
   crChurns:'#FF0000', crRrlUsd:'#FF0000',
   // Churn-related -> bright red #FF0000 (user: all churn metrics in red, not muted/pink)
@@ -5569,6 +5628,7 @@ function applyPanelStyling_(sheet, blocks, blockLayouts, monthsLen, sparkCol, ui
   sheet.setRowHeight(1, rh.title);
 
   for (var b = 0; b < blockLayouts.length; b++) {
+    if (b % 8 === 7) SpreadsheetApp.flush();   // drain buffered format ops periodically — this styler issues thousands of small Range calls (OOM relief, Maysam Jul 14 2026)
     var L = blockLayouts[b];
     var blk = blocks[b];
     var tone = fullPanelTone_(blk, theme);   // PDF Full-Panel palette for detail sections; bright for summary

@@ -812,7 +812,8 @@ SELECT
        THEN SAFE_DIVIDE(gks.gk_sold - COALESCE(gks.gk_churning,0) + COALESCE(vah.appr_k,0), NULLIF(COALESCE(af.tkn, occ.total_kitchens),0))
        ELSE SAFE_DIVIDE(COALESCE(lf.live_sold_k,0)+COALESCE(lf.live_occupied_k,0)+COALESCE(lf.live_vacant_appr_k,0), NULLIF(COALESCE(af.tkn, occ.total_kitchens),0)) END AS live_true_sold_rate,  -- 133
   CASE WHEN af.facility_id IS NOT NULL THEN 1 ELSE 0 END AS is_live_account,                                                   -- 134 (currently-live account facility: go-live-dated & not inactive; lets the panel surface live 0-kitchen facilities like SA - RUH - Mursalat)
-  af.facility_type AS facility_type                                                                                            -- 135 (account facility_type__c: CK/QC/BP/Mixed Use. QC = live pre-build facility, 0 kitchens -> panel tags it "- QC")
+  af.facility_type AS facility_type,                                                                                           -- 135 (account facility_type__c: CK/QC/BP/Mixed Use. QC = live pre-build facility, 0 kitchens -> panel tags it "- QC")
+  SAFE_DIVIDE(COALESCE(xl.xrrl_usd,0), NULLIF(cgb.gross_rr_usd,0)) AS xrrl_pct                                                 -- 136 (RRLX %: facility gross post-access churned LF / prior-month COUNTRY Gross RR $ book (me_sales_panel_k_monthly col 151, built FIRST in the refresh) - facility rows sum toward the country RRLX % - Maysam Jul 2026)
 FROM facility_spine AS s
 LEFT JOIN cws_fac AS cw ON cw.month_end = s.month_end AND cw.facility_id = s.facility_id
 LEFT JOIN xrra_fac AS xa ON xa.month_end = s.month_end AND xa.facility_id = s.facility_id
@@ -833,6 +834,8 @@ LEFT JOIN gk_ls_fac AS gks ON gks.month_end = s.month_end AND gks.facility_id = 
 LEFT JOIN vac_ah_fac AS vah ON vah.month_end = s.month_end AND vah.facility_id = s.facility_id
 LEFT JOIN lsm_fac   AS lf  ON lf.month_end  = s.month_end AND lf.facility_id  = s.facility_id
 LEFT JOIN acct_fac  AS af  ON af.facility_id = s.facility_id
+LEFT JOIN `css-operations.me_panel_dev_us.me_sales_panel_k_monthly` AS cgb   -- prior-month country gross RR book = the RRLX % denominator (same base as the country col-157)
+       ON cgb.country = s.country AND cgb.month_end = LAST_DAY(DATE_SUB(s.month_end, INTERVAL 1 MONTH), MONTH)
 WHERE s.month_end >= DATE('2023-01-31')   -- output-only trim: panel renders from PANEL_START_MONTH 2023-07 (keep a 6-mo lead buffer). Cuts Extract_F ~13.9k -> ~5.9k rows so the Apps Script facility render stays under the memory ceiling. Metric CTEs read month_spine (full history) so 2023+ values are unchanged.
 ORDER BY s.country, s.facility_name, s.month_end;
 END
