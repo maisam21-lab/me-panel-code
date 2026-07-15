@@ -1,3 +1,8 @@
+CREATE OR REPLACE PROCEDURE `css-operations`.me_panel_dev_us.sp_rebuild_me_ae_productivity()
+BEGIN
+-- Proc wrapper (Jul 15 2026) so the Apps Script refreshers can rebuild this table too:
+-- autoRefreshStep chain + meHardRefreshNow call meRunBqProc_('sp_rebuild_me_ae_productivity').
+-- Re-running this FILE redefines the proc; CALL it to actually rebuild the table.
 CREATE OR REPLACE TABLE `css-operations.me_panel_dev_us.me_ae_productivity_by_owner` AS
 -- Per-AE monthly CW kitchens + TCV (by closer closed_won_owner) + approved deals (by current
 -- owner). TCV = LF*fx*min(contract_length,120) -- the SAME basis as the global mart's
@@ -139,3 +144,4 @@ FULL OUTER JOIN xrrl_ae x ON COALESCE(c.month_end,a.month_end)=x.month_end
 LEFT JOIN ae_book b ON b.month_end = LAST_DAY(DATE_SUB(COALESCE(c.month_end, a.month_end, x.month_end), INTERVAL 1 MONTH), MONTH)
                    AND b.country = COALESCE(c.country, a.country, x.country)
                    AND b.ae = COALESCE(c.ae, a.ae, x.ae);
+END;

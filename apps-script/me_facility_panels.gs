@@ -1284,6 +1284,7 @@ function meHardRefreshNow() {
   try {
     meRunBqProc_('sp_rebuild_me_bridge');      // country bridge  -> Extract_K source
     meRunBqProc_('sp_rebuild_me_facility');     // facility table  -> Extract_F source
+    try { meRunBqProc_('sp_rebuild_me_ae_productivity'); } catch (eAe) { Logger.log('ae productivity rebuild: ' + eAe); }   // AE blocks query this table live (Maysam Jul 15 2026)
     pullAllExtracts();                          // pull both into the sheet tabs
     buildMEPanel_v2();                          // master: Full Panel + Summary + Cloud Retail + Metric Book
     // Country detail lives in the STANDALONE files now (per-country facility tabs removed from the ME

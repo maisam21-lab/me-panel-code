@@ -107,6 +107,9 @@ function autoStep_refreshBridgeAndExtracts() {
   try { meRefreshSfFacilitiesFromOps_(); } catch (e) { Logger.log('sf_facilities copy: ' + e); }
   meRunBqProc_('sp_rebuild_me_bridge');    // country bridge -> Extract_K source
   meRunBqProc_('sp_rebuild_me_facility');  // facility table -> Extract_F source
+  // AE productivity table (CW/TCV/Approved/RRLX by closer + cohort %) -- the AE blocks query it
+  // LIVE at build time, so rebuild it here or those numbers go stale (Maysam Jul 15 2026).
+  try { meRunBqProc_('sp_rebuild_me_ae_productivity'); } catch (e) { Logger.log('ae productivity rebuild: ' + e); }
   try { meRefreshApprovedTcvByFacility_(); } catch (e) { Logger.log('approved-tcv-by-fac: ' + e); }
   pullAllExtracts();                       // REAL pull of Extract_K + Extract_F
 }
