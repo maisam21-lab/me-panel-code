@@ -46,10 +46,10 @@ All three tables rebuilt (`css-operations.me_panel_dev_us`):
   failing function from the error dialog Details; last lever = tighter month window
   (PANEL_START_MONTH + facility-bridge WHERE together).
 
-## Pending on user side — Apps Script deploy
-1. Paste `apps-script/me_facility_panels.gs` + `apps-script/me_panel_complete.gs` → Save.
-2. `meHardRefreshNow()` (rebuilds procs, re-pulls Extract_K/F — needs K col 157 / F col
-   136 — rebuilds master + standalones staggered).
+## Deploy status: COMPLETE (Jul 14, end of day)
+Nothing pending. Maysam pasted both .gs files and rebuilt; the sheet now shows the
+closer-cohort AE rates, the RRLX % blocks, and no QC facilities. BigQuery, Apps Script,
+this repo, and the rendered panels all match this snapshot (commit 4060bec + this one).
 
 ## Open decisions / parked
 - **Approved Deals — also exclude Churn Transfer?** June impact −1. PARKED with Jad —
