@@ -6014,7 +6014,7 @@ function applyRowGroups_(sheet, blockLayouts, blocks, opts) {
   // The big Full Panel grouping can exhaust the Sheets API per-minute write quota before
   // the Summary's groups are added (it threw "Quota exceeded for Write requests per minute").
   // Retry after a short sleep so the sliding window resets — Summary then gets its folds.
-  var _grpWaits = [0, 30000, 30000];   // immediate, then +30s, +30s
+  var _grpWaits = [0, 30000, 60000];   // immediate, then +30s, +60s — the longer last wait clears the per-minute window even when a neighboring staggered build is burning quota
   for (var _gw = 0; _gw < _grpWaits.length; _gw++) {
     if (_grpWaits[_gw]) Utilities.sleep(_grpWaits[_gw]);
     try { Sheets.Spreadsheets.batchUpdate({ requests: addReqs }, ssId); break; }
@@ -6035,7 +6035,11 @@ function applyRowGroups_(sheet, blockLayouts, blocks, opts) {
       for (var cf = 0; cf < collapseFeederRanges.length; cf++) {
         var fg = collapseFeederRanges[cf];
         try {
-          var grp = sheet.getRowGroup(fg.s + 1, 2);   // first grouped row (1-based), depth 2 (inside the title fold)
+          // Collapse the DEEPEST group starting at the row. Was hard-coded depth 2, which silently
+          // missed whenever leftover group residue shifted the real depth (Saudi standalone stayed
+          // expanded while other countries folded — Maysam Jul 15 2026).
+          var fDepth = sheet.getRowGroupDepth(fg.s + 1);
+          var grp = fDepth > 0 ? sheet.getRowGroup(fg.s + 1, fDepth) : null;
           if (grp) grp.collapse();
         } catch (eOne) {}
       }

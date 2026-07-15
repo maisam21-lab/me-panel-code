@@ -1335,9 +1335,13 @@ function meScheduleOneOffStandalones_() {
   for (var i = 0; i < trs.length; i++) {                       // clear any leftovers first
     if (oneOff[trs[i].getHandlerFunction()]) { try { ScriptApp.deleteTrigger(trs[i]); } catch (e) {} }
   }
+  // 3-4 min apart, NOT 1 min: each build takes ~2-4 min and its row-group calls burn the Sheets-API
+  // per-minute write quota. At 60/120/180 the Saudi build's grouping ran WHILE UAE was still building,
+  // hit the quota, and silently skipped the folds -- Saudi rendered expanded while every other country
+  // collapsed (Maysam Jul 15 2026). Spacing the builds apart keeps each one's quota window clean.
   ScriptApp.newTrigger('meOneOffStandaloneUAE_').timeBased().after(60 * 1000).create();
-  ScriptApp.newTrigger('meOneOffStandaloneSaudi_').timeBased().after(120 * 1000).create();
-  ScriptApp.newTrigger('meOneOffStandaloneKuwait_').timeBased().after(180 * 1000).create();
+  ScriptApp.newTrigger('meOneOffStandaloneSaudi_').timeBased().after(300 * 1000).create();
+  ScriptApp.newTrigger('meOneOffStandaloneKuwait_').timeBased().after(540 * 1000).create();
 }
 function meOneOffStandaloneUAE_()    { safeBuildStandalone_('UAE'); }
 function meOneOffStandaloneSaudi_()  { safeBuildStandalone_('Saudi Arabia'); }
